@@ -10,6 +10,9 @@ app.log
 build/
 dist/
 
+# Executable files
+KlicStudioServer.exe~
+
 # MACOS
 .DS_Store
 ._*

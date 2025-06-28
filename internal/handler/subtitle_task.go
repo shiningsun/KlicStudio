@@ -1,13 +1,14 @@
 package handler
 
 import (
-	"github.com/gin-gonic/gin"
-	"go.uber.org/zap"
 	"krillin-ai/internal/dto"
 	"krillin-ai/internal/response"
 	"krillin-ai/log"
 	"os"
 	"path/filepath"
+
+	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 func (h Handler) StartSubtitleTask(c *gin.Context) {
@@ -131,4 +132,34 @@ func (h Handler) DownloadFile(c *gin.Context) {
 		return
 	}
 	c.FileAttachment(localFilePath, filepath.Base(localFilePath))
+}
+
+func (h Handler) TranscribeVideo(c *gin.Context) {
+	var req dto.TranscribeVideoReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		log.GetLogger().Error("TranscribeVideo ShouldBindJSON err", zap.Error(err))
+		response.R(c, response.Response{
+			Error: -1,
+			Msg:   "参数错误",
+			Data:  nil,
+		})
+		return
+	}
+
+	svc := h.Service
+
+	data, err := svc.TranscribeVideo(req)
+	if err != nil {
+		response.R(c, response.Response{
+			Error: -1,
+			Msg:   err.Error(),
+			Data:  nil,
+		})
+		return
+	}
+	response.R(c, response.Response{
+		Error: 0,
+		Msg:   "成功",
+		Data:  data,
+	})
 }

@@ -4,33 +4,43 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/samber/lo"
-	"go.uber.org/zap"
 	"krillin-ai/internal/dto"
 	"krillin-ai/internal/storage"
 	"krillin-ai/internal/types"
 	"krillin-ai/log"
 	"krillin-ai/pkg/util"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/samber/lo"
+	"go.uber.org/zap"
 )
 
+func (s Service) validateVideoURL(url string) error {
+	if strings.Contains(url, "youtube.com") {
+		videoId, _ := util.GetYouTubeID(url)
+		if videoId == "" {
+			return fmt.Errorf("invalid YouTube URL")
+		}
+	}
+	if strings.Contains(url, "bilibili.com") {
+		videoId := util.GetBilibiliVideoId(url)
+		if videoId == "" {
+			return fmt.Errorf("invalid Bilibili URL")
+		}
+	}
+	return nil
+}
+
 func (s Service) StartSubtitleTask(req dto.StartVideoSubtitleTaskReq) (*dto.StartVideoSubtitleTaskResData, error) {
-	// 校验链接
-	if strings.Contains(req.Url, "youtube.com") {
-		videoId, _ := util.GetYouTubeID(req.Url)
-		if videoId == "" {
-			return nil, fmt.Errorf("链接不合法")
-		}
+	// Validate URL using shared function
+	if err := s.validateVideoURL(req.Url); err != nil {
+		return nil, err
 	}
-	if strings.Contains(req.Url, "bilibili.com") {
-		videoId := util.GetBilibiliVideoId(req.Url)
-		if videoId == "" {
-			return nil, fmt.Errorf("链接不合法")
-		}
-	}
+
 	// 生成任务id
 	seperates := strings.Split(req.Url, "/")
 	taskId := fmt.Sprintf("%s_%s", util.SanitizePathName(string([]rune(strings.ReplaceAll(seperates[len(seperates)-1], " ", ""))[:16])), util.GenerateRandStringWithUpperLowerNum(4))
@@ -203,6 +213,7 @@ func (s Service) GetTaskStatus(req dto.GetVideoSubtitleTaskReq) (*dto.GetVideoSu
 			Description:           taskPtr.Description,
 			TranslatedTitle:       taskPtr.TranslatedTitle,
 			TranslatedDescription: taskPtr.TranslatedDescription,
+			Language:              taskPtr.OriginLanguage,
 		},
 		SubtitleInfo: lo.Map(taskPtr.SubtitleInfos, func(item types.SubtitleInfo, _ int) *dto.SubtitleInfo {
 			return &dto.SubtitleInfo{
@@ -213,4 +224,96 @@ func (s Service) GetTaskStatus(req dto.GetVideoSubtitleTaskReq) (*dto.GetVideoSu
 		TargetLanguage:    taskPtr.TargetLanguage,
 		SpeechDownloadUrl: taskPtr.SpeechDownloadUrl,
 	}, nil
+}
+
+func (s Service) TranscribeVideo(req dto.TranscribeVideoReq) (*dto.TranscribeVideoResData, error) {
+	// Validate URL using shared function
+	if err := s.validateVideoURL(req.Url); err != nil {
+		return nil, err
+	}
+
+	// Generate temporary task ID
+	taskId := "transcribe_" + util.GenerateRandStringWithUpperLowerNum(8)
+
+	// Create temporary directory
+	taskBasePath := filepath.Join("./temp", taskId)
+	if err := os.MkdirAll(taskBasePath, os.ModePerm); err != nil {
+		return nil, fmt.Errorf("failed to create temp directory: %w", err)
+	}
+	defer os.RemoveAll(taskBasePath) // Clean up after processing
+
+	ctx := context.Background()
+
+	// Step 1: Download video and extract audio
+	audioFilePath, err := s.downloadAndExtractAudio(ctx, req.Url, taskBasePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download and extract audio: %w", err)
+	}
+
+	// Step 2: Transcribe audio to get subtitles
+	transcriptionData, err := s.Transcriber.Transcription(audioFilePath, req.OriginLanguage, taskBasePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to transcribe audio: %w", err)
+	}
+
+	// Step 3: Extract text without timestamps
+	subtitles := s.extractTextWithoutTimestamps(transcriptionData)
+
+	return &dto.TranscribeVideoResData{
+		Subtitles: subtitles,
+		Language:  req.OriginLanguage,
+	}, nil
+}
+
+func (s Service) downloadAndExtractAudio(ctx context.Context, url, taskBasePath string) (string, error) {
+	var localFilePath string
+
+	// Check if it's a local file
+	if strings.HasPrefix(url, "local:") {
+		localFilePath = strings.TrimPrefix(url, "local:")
+	} else {
+		// Download video using yt-dlp
+		outputPath := filepath.Join(taskBasePath, "video")
+		cmd := exec.Command(storage.YtdlpPath,
+			"-f", "best[height<=720]", // Limit to 720p to reduce download time
+			"-o", outputPath+".%(ext)s",
+			url)
+
+		if err := cmd.Run(); err != nil {
+			return "", fmt.Errorf("failed to download video: %w", err)
+		}
+
+		// Find the downloaded file
+		files, err := filepath.Glob(outputPath + ".*")
+		if err != nil || len(files) == 0 {
+			return "", fmt.Errorf("failed to find downloaded video file")
+		}
+		localFilePath = files[0]
+	}
+
+	// Extract audio using ffmpeg
+	audioFilePath := filepath.Join(taskBasePath, "audio.mp3")
+	cmd := exec.Command(storage.FfmpegPath,
+		"-i", localFilePath,
+		"-vn", // No video
+		"-acodec", "mp3",
+		"-ar", "16000", // Sample rate
+		"-ac", "1", // Mono
+		"-y", // Overwrite
+		audioFilePath)
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to extract audio: %w", err)
+	}
+
+	return audioFilePath, nil
+}
+
+func (s Service) extractTextWithoutTimestamps(transcriptionData *types.TranscriptionData) string {
+	if transcriptionData == nil {
+		return ""
+	}
+
+	// Return the full text without timestamps
+	return strings.TrimSpace(transcriptionData.Text)
 }

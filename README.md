@@ -164,6 +164,302 @@ Note: If using voice cloning, `tts` only supports selecting `aliyun`.
 
 Please understand that the task = speech recognition + large model translation + voice service (TTS, etc., optional), which will help you understand the configuration file better.
 
+## 📡 API Documentation
+
+KlicStudio provides a RESTful API for programmatic access to video transcription and subtitle generation services. The API is available when running the server version.
+
+### Base URL
+```
+http://127.0.0.1:8888/api
+```
+
+### Authentication
+Currently, the API does not require authentication. All endpoints are publicly accessible.
+
+### Response Format
+All API responses follow this standard format:
+```json
+{
+  "error": 0,        // 0 for success, -1 for error
+  "msg": "string",   // Success or error message
+  "data": {}         // Response data (varies by endpoint)
+}
+```
+
+### Endpoints
+
+#### 1. Transcribe Video (Simple Transcription)
+**Endpoint:** `POST /api/transcribe`
+
+Transcribes a video to text without timestamps. This is a simplified endpoint that only performs speech recognition.
+
+**Request Body:**
+```json
+{
+  "url": "string",           // Required: Video URL (YouTube, Bilibili, or local file path)
+  "origin_lang": "string"    // Required: Source language code (e.g., "en", "zh", "ja")
+}
+```
+
+**Response:**
+```json
+{
+  "error": 0,
+  "msg": "成功",
+  "data": {
+    "subtitles": "string",   // Full transcribed text without timestamps
+    "language": "string"     // Source language code
+  }
+}
+```
+
+**Usage Examples:**
+
+```bash
+# Transcribe a YouTube video
+curl -X POST http://127.0.0.1:8888/api/transcribe \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    "origin_lang": "en"
+  }'
+
+# Transcribe a local video file
+curl -X POST http://127.0.0.1:8888/api/transcribe \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "local:./uploads/my_video.mp4",
+    "origin_lang": "zh"
+  }'
+
+# Transcribe a Bilibili video
+curl -X POST http://127.0.0.1:8888/api/transcribe \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://www.bilibili.com/video/BV1xx411c7mu",
+    "origin_lang": "zh"
+  }'
+```
+
+#### 2. Start Subtitle Task (Full Processing)
+**Endpoint:** `POST /api/capability/subtitleTask`
+
+Creates a comprehensive subtitle generation task including transcription, translation, and optional TTS.
+
+**Request Body:**
+```json
+{
+  "app_id": 1,                           // Required: Application ID
+  "url": "string",                       // Required: Video URL
+  "origin_lang": "string",               // Required: Source language
+  "target_lang": "string",               // Required: Target language (or "none" for no translation)
+  "bilingual": 0,                        // 0 or 1: Whether to show bilingual subtitles
+  "translation_subtitle_pos": 0,         // Subtitle position (0-3)
+  "modal_filter": 0,                     // Filter mode
+  "tts": 0,                             // 0 or 1: Enable text-to-speech
+  "tts_voice_code": "string",           // Voice code for TTS
+  "tts_voice_clone_src_file_url": "string", // Voice clone source file
+  "replace": ["string"],                 // Array of terms to replace
+  "language": "string",                  // Language code
+  "embed_subtitle_video_type": "string", // Video type for embedding subtitles
+  "vertical_major_title": "string",      // Major title for vertical videos
+  "vertical_minor_title": "string",      // Minor title for vertical videos
+  "origin_language_word_one_line": 0     // Words per line for origin language
+}
+```
+
+**Response:**
+```json
+{
+  "error": 0,
+  "msg": "成功",
+  "data": {
+    "task_id": "string"
+  }
+}
+```
+
+**Usage Example:**
+```bash
+curl -X POST http://127.0.0.1:8888/api/capability/subtitleTask \
+  -H "Content-Type: application/json" \
+  -d '{
+    "app_id": 1,
+    "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    "origin_lang": "en",
+    "target_lang": "zh",
+    "bilingual": 1,
+    "tts": 0,
+    "language": "en"
+  }'
+```
+
+#### 3. Get Subtitle Task Status
+**Endpoint:** `GET /api/capability/subtitleTask`
+
+Retrieves the status and results of a subtitle generation task.
+
+**Query Parameters:**
+- `taskId` (string) - The task ID returned from the start task endpoint
+
+**Response:**
+```json
+{
+  "error": 0,
+  "msg": "成功",
+  "data": {
+    "task_id": "string",
+    "process_percent": 50,
+    "video_info": {
+      "title": "string",
+      "description": "string",
+      "translated_title": "string",
+      "translated_description": "string",
+      "language": "string"
+    },
+    "subtitle_info": [
+      {
+        "name": "string",
+        "download_url": "string"
+      }
+    ],
+    "target_language": "string",
+    "speech_download_url": "string"
+  }
+}
+```
+
+**Usage Example:**
+```bash
+curl "http://127.0.0.1:8888/api/capability/subtitleTask?taskId=your_task_id"
+```
+
+#### 4. Upload File
+**Endpoint:** `POST /api/file`
+
+Uploads a video file to the server for processing.
+
+**Request:** Multipart form data
+- `file` (file) - The video file to upload
+
+**Response:**
+```json
+{
+  "error": 0,
+  "msg": "文件上传成功",
+  "data": {
+    "file_path": ["local:./uploads/filename.ext"]
+  }
+}
+```
+
+**Usage Example:**
+```bash
+curl -X POST http://127.0.0.1:8888/api/file \
+  -F "file=@/path/to/your/video.mp4"
+```
+
+#### 5. Download File
+**Endpoint:** `GET /api/file/*filepath`
+
+Downloads a generated file from the server.
+
+**Path Parameters:**
+- `filepath` (string) - The path to the file to download
+
+**Response:** File download
+
+**Usage Example:**
+```bash
+curl -O "http://127.0.0.1:8888/api/file/path/to/generated/file.srt"
+```
+
+### Complete Workflow Example
+
+Here's a complete example of using the API to transcribe and translate a YouTube video:
+
+```bash
+# 1. Start a subtitle task
+TASK_RESPONSE=$(curl -s -X POST http://127.0.0.1:8888/api/capability/subtitleTask \
+  -H "Content-Type: application/json" \
+  -d '{
+    "app_id": 1,
+    "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    "origin_lang": "en",
+    "target_lang": "zh",
+    "bilingual": 1,
+    "tts": 0,
+    "language": "en"
+  }')
+
+# Extract task ID
+TASK_ID=$(echo $TASK_RESPONSE | jq -r '.data.task_id')
+echo "Task ID: $TASK_ID"
+
+# 2. Poll for completion
+while true; do
+  STATUS_RESPONSE=$(curl -s "http://127.0.0.1:8888/api/capability/subtitleTask?taskId=$TASK_ID")
+  PERCENT=$(echo $STATUS_RESPONSE | jq -r '.data.process_percent')
+  echo "Progress: $PERCENT%"
+  
+  if [ "$PERCENT" = "100" ]; then
+    echo "Task completed!"
+    echo $STATUS_RESPONSE | jq '.data'
+    break
+  fi
+  
+  sleep 10
+done
+
+# 3. Download generated files
+echo $STATUS_RESPONSE | jq -r '.data.subtitle_info[].download_url' | while read url; do
+  if [ "$url" != "null" ] && [ "$url" != "" ]; then
+    filename=$(basename "$url")
+    curl -O "$url"
+    echo "Downloaded: $filename"
+  fi
+done
+```
+
+### Error Handling
+
+The API returns error responses in the following format:
+
+```json
+{
+  "error": -1,
+  "msg": "Error description",
+  "data": null
+}
+```
+
+Common error messages:
+- `"invalid YouTube URL"` - Invalid YouTube video URL
+- `"invalid Bilibili URL"` - Invalid Bilibili video URL
+- `"failed to download and extract audio"` - Video download or audio extraction failed
+- `"failed to transcribe audio"` - Speech recognition failed
+- `"任务不存在"` - Task not found
+- `"任务失败"` - Task processing failed
+
+### Rate Limiting
+
+Currently, there are no rate limits implemented. However, it's recommended to:
+- Wait for task completion before starting new tasks
+- Use appropriate delays between API calls
+- Monitor server resources during heavy usage
+
+### Supported Video Sources
+
+- **YouTube**: Full URLs or video IDs
+- **Bilibili**: Full URLs or video IDs  
+- **Local Files**: Use `local:./path/to/file.mp4` format
+
+### Supported Languages
+
+**Input Languages:** Chinese (zh), English (en), Japanese (ja), German (de), Turkish (tr), Korean (kr), Russian (rus), Malay (ms)
+
+**Translation Languages:** English, Chinese, Russian, Spanish, French, and 101+ other languages
+
 ## Frequently Asked Questions
 
 Please visit [Frequently Asked Questions](./faq.md)

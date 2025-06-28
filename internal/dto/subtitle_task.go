@@ -60,3 +60,20 @@ type GetVideoSubtitleTaskRes struct {
 	Msg   string                       `json:"msg"`
 	Data  *GetVideoSubtitleTaskResData `json:"data"`
 }
+
+// Transcribe endpoint DTOs
+type TranscribeVideoReq struct {
+	Url            string `json:"url" binding:"required"`
+	OriginLanguage string `json:"origin_lang" binding:"required"`
+}
+
+type TranscribeVideoResData struct {
+	Subtitles string `json:"subtitles"`
+	Language  string `json:"language"`
+}
+
+type TranscribeVideoRes struct {
+	Error int32                   `json:"error"`
+	Msg   string                  `json:"msg"`
+	Data  *TranscribeVideoResData `json:"data"`
+}
