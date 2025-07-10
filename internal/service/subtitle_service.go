@@ -1,7 +1,9 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"krillin-ai/internal/dto"
@@ -9,6 +11,7 @@ import (
 	"krillin-ai/internal/types"
 	"krillin-ai/log"
 	"krillin-ai/pkg/util"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -232,13 +235,37 @@ func (s Service) TranscribeVideo(req dto.TranscribeVideoReq) (*dto.TranscribeVid
 		return nil, err
 	}
 
+	// Return OK response immediately
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				const size = 64 << 10
+				buf := make([]byte, size)
+				buf = buf[:runtime.Stack(buf, false)]
+				log.GetLogger().Error("TranscribeVideo panic", zap.Any("panic:", r), zap.Any("stack:", buf))
+			}
+		}()
+
+		// Process transcription asynchronously
+		if err := s.processTranscriptionAsync(req); err != nil {
+			log.GetLogger().Error("TranscribeVideo processTranscriptionAsync err", zap.Any("req", req), zap.Error(err))
+		}
+	}()
+
+	return &dto.TranscribeVideoResData{
+		Subtitles: "",
+		Language:  req.OriginLanguage,
+	}, nil
+}
+
+func (s Service) processTranscriptionAsync(req dto.TranscribeVideoReq) error {
 	// Generate temporary task ID
 	taskId := "transcribe_" + util.GenerateRandStringWithUpperLowerNum(8)
 
 	// Create temporary directory
 	taskBasePath := filepath.Join("./temp", taskId)
 	if err := os.MkdirAll(taskBasePath, os.ModePerm); err != nil {
-		return nil, fmt.Errorf("failed to create temp directory: %w", err)
+		return fmt.Errorf("failed to create temp directory: %w", err)
 	}
 	defer os.RemoveAll(taskBasePath) // Clean up after processing
 
@@ -247,22 +274,50 @@ func (s Service) TranscribeVideo(req dto.TranscribeVideoReq) (*dto.TranscribeVid
 	// Step 1: Download video and extract audio
 	audioFilePath, err := s.downloadAndExtractAudio(ctx, req.Url, taskBasePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to download and extract audio: %w", err)
+		return fmt.Errorf("failed to download and extract audio: %w", err)
 	}
 
 	// Step 2: Transcribe audio to get subtitles
 	transcriptionData, err := s.Transcriber.Transcription(audioFilePath, req.OriginLanguage, taskBasePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to transcribe audio: %w", err)
+		return fmt.Errorf("failed to transcribe audio: %w", err)
 	}
 
 	// Step 3: Extract text without timestamps
 	subtitles := s.extractTextWithoutTimestamps(transcriptionData)
 
-	return &dto.TranscribeVideoResData{
-		Subtitles: subtitles,
-		Language:  req.OriginLanguage,
-	}, nil
+	// Step 4: Call the specified endpoint with the results
+	if err := s.callTranscriptEndpoint(req.Url, subtitles); err != nil {
+		return fmt.Errorf("failed to call transcript endpoint: %w", err)
+	}
+
+	log.GetLogger().Info("TranscribeVideo async processing completed", zap.String("taskId", taskId))
+	return nil
+}
+
+func (s Service) callTranscriptEndpoint(url, content string) error {
+	payload := map[string]string{
+		"url":     url,
+		"content": content,
+	}
+
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	resp, err := http.Post("http://localhost:8000/transcript", "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to call transcript endpoint: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("transcript endpoint returned non-OK status: %d", resp.StatusCode)
+	}
+
+	log.GetLogger().Info("Successfully called transcript endpoint", zap.String("url", url))
+	return nil
 }
 
 func (s Service) downloadAndExtractAudio(ctx context.Context, url, taskBasePath string) (string, error) {
